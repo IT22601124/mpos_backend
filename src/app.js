@@ -19,12 +19,15 @@ if (env.nodeEnv !== 'test') {
   app.use(morgan('dev'));
 }
 
-app.get('/api/health', (_req, res) => {
+const healthHandler = (_req, res) => {
   res.status(200).json({
     status: 'ok',
     service: 'mpos-backend'
   });
-});
+};
+
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
 
 
 app.use('/api', backendUserRoutes);
