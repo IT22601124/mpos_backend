@@ -39,6 +39,11 @@ module.exports = (sequelize, DataTypes) => {
     access_token: {
       type: DataTypes.STRING(500),
       allowNull: true
+    },
+    status: {
+      type: DataTypes.ENUM('active', 'inactive'),
+      allowNull: false,
+      defaultValue: 'active'
     }
   }, {
     tableName: 'backend_users',
