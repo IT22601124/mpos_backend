@@ -16,5 +16,6 @@ router.get('/pos-sales/reports/tax-discounts', authMiddleware, posSaleController
 router.get('/pos-sales/reports/credit', authMiddleware, posSaleController.getPosSalesCreditReport);
 router.get('/pos-sales/:id', authMiddleware, posSaleController.getPosSaleById);
 router.put('/pos-sales/:id/status', authMiddleware, posSaleController.updatePosSaleStatus);
+router.delete('/pos-sales/:id', authMiddleware, posSaleController.deletePosSale);
 
 module.exports = router;

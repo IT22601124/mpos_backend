@@ -28,10 +28,91 @@ const productInclude = () => [
   { model: ProductVariant, as: 'variants' }
 ];
 
+const nullableForeignKeys = {
+  category_id: { model: Category, label: 'Category' },
+  brand_id: { model: Brand, label: 'Brand' },
+  unit_id: { model: Unit, label: 'Unit' }
+};
+
+const emptyToNull = (value) => {
+  if (value === undefined || value === '') {
+    return null;
+  }
+
+  return value;
+};
+
+const normalizeProductPayload = (body) => {
+  const payload = { ...body };
+
+  Object.keys(nullableForeignKeys).forEach((key) => {
+    payload[key] = emptyToNull(payload[key]);
+  });
+
+  return payload;
+};
+
+const validateProductRelations = async (payload) => {
+  for (const [key, relation] of Object.entries(nullableForeignKeys)) {
+    const value = payload[key];
+
+    if (value === null || value === undefined) {
+      continue;
+    }
+
+    const id = Number(value);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return `${relation.label} ID must be a valid positive number`;
+    }
+
+    const exists = await relation.model.findByPk(id, { attributes: ['id'] });
+
+    if (!exists) {
+      return `${relation.label} not found for id ${id}`;
+    }
+
+    payload[key] = id;
+  }
+
+  return null;
+};
+
+const productErrorResponse = (res, error) => {
+  if (error.name === 'SequelizeUniqueConstraintError') {
+    return res.status(409).json({
+      success: false,
+      error: 'Product code or barcode already exists'
+    });
+  }
+
+  if (error.name === 'SequelizeForeignKeyConstraintError') {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid category, brand, unit, or creator reference'
+    });
+  }
+
+  return res.status(500).json({
+    success: false,
+    error: error.message
+  });
+};
+
 exports.createProduct = async (req, res) => {
   try {
+    const payload = normalizeProductPayload(req.body);
+    const relationError = await validateProductRelations(payload);
+
+    if (relationError) {
+      return res.status(400).json({
+        success: false,
+        error: relationError
+      });
+    }
+
     const product = await Product.create({
-      ...req.body,
+      ...payload,
       created_by: req.body.created_by || (req.user ? req.user.id : null)
     });
 
@@ -40,7 +121,7 @@ exports.createProduct = async (req, res) => {
       product
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    productErrorResponse(res, error);
   }
 };
 
@@ -87,14 +168,24 @@ exports.updateProduct = async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    await product.update(req.body);
+    const payload = normalizeProductPayload(req.body);
+    const relationError = await validateProductRelations(payload);
+
+    if (relationError) {
+      return res.status(400).json({
+        success: false,
+        error: relationError
+      });
+    }
+
+    await product.update(payload);
 
     res.json({
       success: true,
       product
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    productErrorResponse(res, error);
   }
 };
 

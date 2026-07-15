@@ -1,4 +1,6 @@
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -24,11 +26,17 @@ import productVariantRoutes from './routes/product_variant_route.js';
 import customerRoutes from './routes/customer_route.js';
 import customerCreditTransactionRoutes from './routes/customer_credit_transaction_route.js';
 import posSaleRoutes from './routes/pos_sale_route.js';
+import storeProfileRoutes from './routes/store_profile_route.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const app = express();
 
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 app.use(cors({ origin: env.corsOrigin }));
+app.use('/uploads', express.static(path.join(__dirname, '..', 'public', 'uploads')));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -65,6 +73,7 @@ app.use('/api', productVariantRoutes);
 app.use('/api', customerRoutes);
 app.use('/api', customerCreditTransactionRoutes);
 app.use('/api', posSaleRoutes);
+app.use('/api', storeProfileRoutes);
 
 app.use(env.apiPrefix, routes);
 app.use(notFoundHandler);

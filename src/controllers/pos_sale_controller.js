@@ -41,6 +41,16 @@ const requestError = (message, statusCode = 400) => {
 };
 
 const normalizeItems = (items = []) => items.map((item) => {
+  if (!item.product_id) {
+    throw requestError('Every sale item must have product_id');
+  }
+
+  ['qty', 'unit_price', 'line_total'].forEach((field) => {
+    if (item[field] === undefined || item[field] === null || item[field] === '') {
+      throw requestError(`Every sale item must have ${field}`);
+    }
+  });
+
   const qty = toNumber(item.qty);
   const unitPrice = toNumber(item.unit_price);
   const discount = toNumber(item.discount);
@@ -48,6 +58,14 @@ const normalizeItems = (items = []) => items.map((item) => {
   const lineTotal = item.line_total === undefined
     ? roundMoney((qty * unitPrice) - discount + tax)
     : roundMoney(toNumber(item.line_total));
+
+  if (qty <= 0) {
+    throw requestError('Sale item qty must be greater than zero');
+  }
+
+  if (unitPrice < 0 || lineTotal < 0) {
+    throw requestError('Sale item prices and totals cannot be negative');
+  }
 
   return {
     product_id: item.product_id,
@@ -173,24 +191,11 @@ const emptySummaryReport = () => ({
 });
 
 const generateSaleNo = async (transaction) => {
-  const now = new Date();
-  const datePart = now.toISOString().slice(0, 10).replace(/-/g, '');
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-
-  const count = await PosSale.count({
-    where: {
-      created_at: {
-        [Op.gte]: start,
-        [Op.lt]: end
-      }
-    },
+  const maxId = await PosSale.max('id', {
     transaction
   });
 
-  return `POS-${datePart}-${String(count + 1).padStart(4, '0')}`;
+  return `SALE-${String(toNumber(maxId) + 1).padStart(6, '0')}`;
 };
 
 const createStockMovements = async (sale, items, transaction, type = 'sale') => {
@@ -266,6 +271,10 @@ exports.createPosSale = async (req, res) => {
 
       if (!items.length) {
         throw requestError('At least one sale item is required');
+      }
+
+      if (!Array.isArray(payments)) {
+        throw requestError('Payments must be an array');
       }
 
       const totals = calculateTotals(items, payments);
@@ -375,6 +384,10 @@ exports.updatePosSaleStatus = async (req, res) => {
         throw requestError('Completed sales cannot be moved back to held');
       }
 
+      if (previousStatus === 'held' && nextStatus !== 'completed') {
+        throw requestError('Held sales can only be completed');
+      }
+
       if (previousStatus === 'held' && nextStatus === 'completed') {
         const items = await PosSaleItem.findAll({ where: { sale_id: saleRecord.id }, transaction });
         const payments = await PosSalePayment.findAll({ where: { sale_id: saleRecord.id }, transaction });
@@ -399,6 +412,47 @@ exports.updatePosSaleStatus = async (req, res) => {
 
     const saleWithDetails = await PosSale.findByPk(sale.id, { include: saleInclude() });
     res.json({ success: true, pos_sale: saleWithDetails });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+};
+
+exports.deletePosSale = async (req, res) => {
+  try {
+    const deleted = await sequelize.transaction(async (transaction) => {
+      const sale = await PosSale.findByPk(req.params.id, { transaction });
+
+      if (!sale) {
+        return null;
+      }
+
+      if (sale.status !== 'held') {
+        throw requestError('Only held orders can be deleted');
+      }
+
+      await PosSalePayment.destroy({
+        where: { sale_id: sale.id },
+        transaction
+      });
+
+      await PosSaleItem.destroy({
+        where: { sale_id: sale.id },
+        transaction
+      });
+
+      await sale.destroy({ transaction });
+
+      return sale;
+    });
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'pos_sale not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Held order deleted successfully'
+    });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });
   }
