@@ -5,6 +5,7 @@ const posSaleController = require('../controllers/pos_sale_controller');
 
 router.post('/pos-sales', authMiddleware, posSaleController.createPosSale);
 router.get('/pos-sales', authMiddleware, posSaleController.getAllPosSales);
+router.get('/dashboard', authMiddleware, posSaleController.getDashboardReport);
 router.get('/pos-sales/reports/summary', authMiddleware, posSaleController.getPosSalesSummaryReport);
 router.get('/pos-sales/reports/sales', authMiddleware, posSaleController.getPosSalesReport);
 router.get('/pos-sales/reports/cashiers', authMiddleware, posSaleController.getPosSalesCashiersReport);

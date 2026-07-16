@@ -27,6 +27,7 @@ import customerRoutes from './routes/customer_route.js';
 import customerCreditTransactionRoutes from './routes/customer_credit_transaction_route.js';
 import posSaleRoutes from './routes/pos_sale_route.js';
 import storeProfileRoutes from './routes/store_profile_route.js';
+import posSettingRoutes from './routes/pos_setting_route.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +75,7 @@ app.use('/api', customerRoutes);
 app.use('/api', customerCreditTransactionRoutes);
 app.use('/api', posSaleRoutes);
 app.use('/api', storeProfileRoutes);
+app.use('/api', posSettingRoutes);
 
 app.use(env.apiPrefix, routes);
 app.use(notFoundHandler);

@@ -9,8 +9,10 @@ const {
   Category,
   Customer,
   BackendUser,
+  Role,
   StockMovement,
-  CustomerCreditTransaction
+  CustomerCreditTransaction,
+  StoreProfile
 } = require('../../models');
 
 const { Op } = Sequelize;
@@ -33,6 +35,43 @@ const toNumber = (value) => {
 };
 
 const roundMoney = (value) => Number((Math.round((value + Number.EPSILON) * 100) / 100).toFixed(2));
+
+const dateKey = (value) => {
+  const date = value ? new Date(value) : new Date();
+  return date.toISOString().slice(0, 10);
+};
+
+const addDays = (date, days) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+const lastSevenDaysRange = () => {
+  const end = new Date();
+  const start = addDays(end, -6);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
+const resolveSevenDayRange = (query = {}) => {
+  if (query.from && query.to) {
+    return { start: new Date(query.from), end: new Date(query.to) };
+  }
+
+  if (query.from) {
+    const start = new Date(query.from);
+    return { start, end: addDays(start, 6) };
+  }
+
+  if (query.to) {
+    const end = new Date(query.to);
+    return { start: addDays(end, -6), end };
+  }
+
+  return lastSevenDaysRange();
+};
 
 const requestError = (message, statusCode = 400) => {
   const error = new Error(message);
@@ -163,9 +202,132 @@ const getPaymentMethodLabel = (sale) => {
   return payments.length ? paymentLabel(payments[0].method) : 'Unpaid';
 };
 
+const buildPublicUrl = (req, value) => {
+  if (!value) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value)) {
+    return value;
+  }
+
+  const normalizedPath = value.startsWith('/') ? value : `/${value}`;
+
+  return `${req.protocol}://${req.get('host')}${normalizedPath}`;
+};
+
+const serializeStoreProfile = (req, profile) => {
+  if (!profile) {
+    return null;
+  }
+
+  const data = profile.toJSON ? profile.toJSON() : profile;
+
+  return {
+    ...data,
+    logo_url: buildPublicUrl(req, data.logo)
+  };
+};
+
+const mapRecentSale = (sale) => {
+  const totalAmount = toNumber(sale.grand_total);
+  const creditAmount = creditAmountForSale(sale);
+  const paidAmount = nonCreditPaidAmountForSale(sale);
+  const amountDueNow = roundMoney(totalAmount - creditAmount);
+
+  return {
+    id: sale.id,
+    sale_no: sale.sale_no,
+    sold_at: sale.sold_at,
+    created_at: sale.created_at,
+    customer_name: sale.customer ? sale.customer.name : 'Walk-in customer',
+    cashier_id: sale.cashier_id,
+    cashier_name: sale.cashier ? sale.cashier.name : null,
+    payment_method: getPaymentMethodLabel(sale),
+    subtotal: toNumber(sale.subtotal),
+    discount_amount: toNumber(sale.discount_total),
+    tax_amount: toNumber(sale.tax_total),
+    total_amount: totalAmount,
+    paid_amount: paidAmount,
+    collected: paidAmount,
+    change_amount: Math.max(roundMoney(paidAmount - amountDueNow), 0),
+    credit_amount: creditAmount,
+    credit_due: creditAmount,
+    status: sale.status
+  };
+};
+
+const buildDailyTotals = (sales, fromDate, toDate) => {
+  const totals = new Map();
+  const start = new Date(fromDate);
+  const end = new Date(toDate);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
+    totals.set(dateKey(cursor), {
+      date: dateKey(cursor),
+      total_sales: 0,
+      net_sales: 0,
+      collected: 0,
+      credit_due: 0,
+      items_sold: 0,
+      bill_count: 0
+    });
+  }
+
+  sales.forEach((sale) => {
+    const key = dateKey(sale.sold_at || sale.created_at);
+    const existing = totals.get(key) || {
+      date: key,
+      total_sales: 0,
+      net_sales: 0,
+      collected: 0,
+      credit_due: 0,
+      items_sold: 0,
+      bill_count: 0
+    };
+
+    const totalSales = toNumber(sale.grand_total);
+    const collected = nonCreditPaidAmountForSale(sale);
+    const creditDue = creditAmountForSale(sale);
+
+    existing.total_sales = roundMoney(existing.total_sales + totalSales);
+    existing.net_sales = roundMoney(existing.net_sales + totalSales);
+    existing.collected = roundMoney(existing.collected + collected);
+    existing.credit_due = roundMoney(existing.credit_due + creditDue);
+    existing.items_sold = roundMoney(existing.items_sold + unitsSoldForSale(sale));
+    existing.bill_count += 1;
+
+    totals.set(key, existing);
+  });
+
+  return Array.from(totals.values()).sort((a, b) => a.date.localeCompare(b.date));
+};
+
+const applyDashboardAliases = (summary, targetValue = 0) => {
+  const todayTarget = toNumber(targetValue);
+  const netSales = toNumber(summary.total_sales);
+
+  return {
+    ...summary,
+    net_sales: netSales,
+    collected: toNumber(summary.paid_amount),
+    credit_due: toNumber(summary.credit_amount),
+    items_sold: toNumber(summary.units_sold),
+    today_target: todayTarget,
+    target_progress: todayTarget > 0 ? roundMoney((netSales / todayTarget) * 100) : 0
+  };
+};
+
 const saleReportInclude = () => [
   { model: Customer, as: 'customer' },
-  { model: BackendUser, as: 'cashier', attributes: ['id', 'name', 'email', 'phone'] },
+  {
+    model: BackendUser,
+    as: 'cashier',
+    attributes: ['id', 'name', 'email', 'phone', 'role_id'],
+    include: [{ model: Role, as: 'role', attributes: ['id', 'name'] }]
+  },
   { model: PosSalePayment, as: 'payments' },
   { model: PosSaleItem, as: 'items' }
 ];
@@ -175,6 +337,16 @@ const fetchReportSales = (query, include = saleReportInclude()) => PosSale.findA
   include,
   order: [['sold_at', 'DESC'], ['id', 'DESC']]
 });
+
+const getSalesForLastSevenDays = (query = {}) => {
+  const { start, end } = lastSevenDaysRange();
+
+  return fetchReportSales({
+    ...query,
+    from: query.from || start.toISOString(),
+    to: query.to || end.toISOString()
+  });
+};
 
 const emptySummaryReport = () => ({
   total_sales: 0,
@@ -482,7 +654,7 @@ exports.getPosSalesSummaryReport = async (req, res) => {
       ? roundMoney(summary.total_sales / summary.bill_count)
       : 0;
 
-    res.json(summary);
+    res.json(applyDashboardAliases(summary, req.query.today_target));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -490,33 +662,15 @@ exports.getPosSalesSummaryReport = async (req, res) => {
 
 exports.getPosSalesReport = async (req, res) => {
   try {
-    const sales = await fetchReportSales(req.query);
+    const hasDateRange = req.query.from || req.query.to;
+    const range = resolveSevenDayRange(req.query);
+    const sales = hasDateRange ? await fetchReportSales(req.query) : await getSalesForLastSevenDays(req.query);
+    const mappedSales = sales.map(mapRecentSale);
 
     res.json({
-      sales: sales.map((sale) => {
-        const totalAmount = toNumber(sale.grand_total);
-        const creditAmount = creditAmountForSale(sale);
-        const paidAmount = nonCreditPaidAmountForSale(sale);
-        const amountDueNow = roundMoney(totalAmount - creditAmount);
-
-        return {
-          id: sale.id,
-          sale_no: sale.sale_no,
-          sold_at: sale.sold_at,
-          customer_name: sale.customer ? sale.customer.name : 'Walk-in customer',
-          cashier_id: sale.cashier_id,
-          cashier_name: sale.cashier ? sale.cashier.name : null,
-          payment_method: getPaymentMethodLabel(sale),
-          subtotal: toNumber(sale.subtotal),
-          discount_amount: toNumber(sale.discount_total),
-          tax_amount: toNumber(sale.tax_total),
-          total_amount: totalAmount,
-          paid_amount: paidAmount,
-          change_amount: Math.max(roundMoney(paidAmount - amountDueNow), 0),
-          credit_amount: creditAmount,
-          status: sale.status
-        };
-      })
+      daily_totals: buildDailyTotals(sales, range.start, range.end),
+      recent_sales: mappedSales.slice(0, toNumber(req.query.recent_limit) || 10),
+      sales: mappedSales
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -539,9 +693,12 @@ exports.getPosSalesCashiersReport = async (req, res) => {
         cash_sales: 0,
         card_sales: 0,
         credit_sales: 0,
+        collected: 0,
+        credit: 0,
         discount_amount: 0,
         tax_amount: 0,
-        average_bill: 0
+        average_bill: 0,
+        role: sale.cashier && sale.cashier.role ? sale.cashier.role.name : null
       };
 
       existing.bill_count += 1;
@@ -550,6 +707,8 @@ exports.getPosSalesCashiersReport = async (req, res) => {
       existing.cash_sales = roundMoney(existing.cash_sales + paymentAmount(sale, 'cash'));
       existing.card_sales = roundMoney(existing.card_sales + paymentAmount(sale, 'card'));
       existing.credit_sales = roundMoney(existing.credit_sales + creditAmountForSale(sale));
+      existing.collected = roundMoney(existing.collected + nonCreditPaidAmountForSale(sale));
+      existing.credit = existing.credit_sales;
       existing.discount_amount = roundMoney(existing.discount_amount + toNumber(sale.discount_total));
       existing.tax_amount = roundMoney(existing.tax_amount + toNumber(sale.tax_total));
       existing.average_bill = existing.bill_count
@@ -562,6 +721,68 @@ exports.getPosSalesCashiersReport = async (req, res) => {
     res.json({ cashiers: Array.from(cashierMap.values()) });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+exports.getDashboardReport = async (req, res) => {
+  try {
+    const sales = await getSalesForLastSevenDays(req.query);
+    const summary = sales.reduce((totals, sale) => {
+      const totalSales = toNumber(sale.grand_total);
+      const creditAmount = creditAmountForSale(sale);
+
+      totals.total_sales = roundMoney(totals.total_sales + totalSales);
+      totals.bill_count += 1;
+      totals.units_sold = roundMoney(totals.units_sold + unitsSoldForSale(sale));
+      totals.paid_amount = roundMoney(totals.paid_amount + nonCreditPaidAmountForSale(sale));
+      totals.credit_amount = roundMoney(totals.credit_amount + creditAmount);
+      totals.tax_amount = roundMoney(totals.tax_amount + toNumber(sale.tax_total));
+      totals.discount_amount = roundMoney(totals.discount_amount + toNumber(sale.discount_total));
+      totals.cash_sales = roundMoney(totals.cash_sales + paymentAmount(sale, 'cash'));
+      totals.card_sales = roundMoney(totals.card_sales + paymentAmount(sale, 'card'));
+      totals.credit_sales = roundMoney(totals.credit_sales + creditAmount);
+      return totals;
+    }, emptySummaryReport());
+
+    summary.average_bill = summary.bill_count
+      ? roundMoney(summary.total_sales / summary.bill_count)
+      : 0;
+
+    const cashierMap = new Map();
+    sales.forEach((sale) => {
+      const cashierId = sale.cashier_id || 0;
+      const existing = cashierMap.get(cashierId) || {
+        cashier_id: sale.cashier_id,
+        cashier_name: sale.cashier ? sale.cashier.name : null,
+        role: sale.cashier && sale.cashier.role ? sale.cashier.role.name : null,
+        total_sales: 0,
+        collected: 0,
+        credit: 0,
+        bill_count: 0
+      };
+
+      existing.total_sales = roundMoney(existing.total_sales + toNumber(sale.grand_total));
+      existing.collected = roundMoney(existing.collected + nonCreditPaidAmountForSale(sale));
+      existing.credit = roundMoney(existing.credit + creditAmountForSale(sale));
+      existing.bill_count += 1;
+
+      cashierMap.set(cashierId, existing);
+    });
+
+    const { start, end } = lastSevenDaysRange();
+    const profile = await StoreProfile.findOne({ order: [['id', 'ASC']] });
+    const mappedSales = sales.map(mapRecentSale);
+
+    res.json({
+      success: true,
+      metrics: applyDashboardAliases(summary, req.query.today_target),
+      chart: buildDailyTotals(sales, start, end),
+      cashier_summaries: Array.from(cashierMap.values()),
+      recent_sales: mappedSales.slice(0, toNumber(req.query.recent_limit) || 10),
+      store_profile: serializeStoreProfile(req, profile)
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };
 
