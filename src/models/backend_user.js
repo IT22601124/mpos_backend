@@ -44,6 +44,39 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 'active',
     },
+    designation: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    department: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    salary: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
+    shift: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    emergency_contact: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    arrival_time: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    leave_time: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    salary_paid: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
   }, {
     tableName: 'backend_users',
     timestamps: true,
