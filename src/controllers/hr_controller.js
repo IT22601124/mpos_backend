@@ -1,7 +1,9 @@
-const { HRPayroll, HRAdvanceRequest, HRLeaveRequest, BackendUser } = require('../../models');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { HRPayroll, HRAdvanceRequest, HRLeaveRequest, BackendUser } = require('../../models/index.js');
 
 // Fetch or initialize monthly payroll sheet
-exports.getMonthlyPayroll = async (req, res) => {
+export const getMonthlyPayroll = async (req, res) => {
   try {
     const { month } = req.query; // e.g. YYYY-MM
     if (!month) return res.status(400).json({ error: 'Month parameter is required' });
@@ -54,7 +56,7 @@ exports.getMonthlyPayroll = async (req, res) => {
 };
 
 // Update leaves/hours
-exports.savePayrollRecord = async (req, res) => {
+export const savePayrollRecord = async (req, res) => {
   try {
     const { id, leaveCount, workHours, advancePay, netSalary } = req.body;
     const record = await HRPayroll.findByPk(id);
@@ -68,7 +70,7 @@ exports.savePayrollRecord = async (req, res) => {
 };
 
 // Confirm Salary payment
-exports.paySalary = async (req, res) => {
+export const paySalary = async (req, res) => {
   try {
     const { id } = req.params;
     const { paidAt } = req.body;
@@ -83,7 +85,7 @@ exports.paySalary = async (req, res) => {
 };
 
 // Fetch advance requests
-exports.getAdvanceRequests = async (req, res) => {
+export const getAdvanceRequests = async (req, res) => {
   try {
     const requests = await HRAdvanceRequest.findAll({
       order: [['created_at', 'DESC']],
@@ -107,7 +109,7 @@ exports.getAdvanceRequests = async (req, res) => {
 };
 
 // Request Advance Payment
-exports.requestAdvancePay = async (req, res) => {
+export const requestAdvancePay = async (req, res) => {
   try {
     const { userId, amount, requestDate, reason } = req.body;
     const newRequest = await HRAdvanceRequest.create({
@@ -125,7 +127,7 @@ exports.requestAdvancePay = async (req, res) => {
 };
 
 // Fetch Leave Requests
-exports.getLeaveRequests = async (req, res) => {
+export const getLeaveRequests = async (req, res) => {
   try {
     const leaves = await HRLeaveRequest.findAll({
       order: [['created_at', 'DESC']],
@@ -150,7 +152,7 @@ exports.getLeaveRequests = async (req, res) => {
 };
 
 // Log New Leave Request & adjust monthly payroll leaf balance
-exports.createLeaveRequest = async (req, res) => {
+export const createLeaveRequest = async (req, res) => {
   try {
     const { userId, leaveType, startDate, endDate, reason } = req.body;
     

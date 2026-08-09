@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import authMiddleware from '../middlewares/authMiddleware.js';
+import * as stockMovementController from '../controllers/stock_movement_controller.js';
+
 const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const stockMovementController = require('../controllers/stock_movement_controller');
 
 router.post('/stock-movements', authMiddleware, stockMovementController.createStockMovement);
 router.get('/stock-movements', authMiddleware, stockMovementController.getAllStockMovements);
@@ -9,4 +10,4 @@ router.get('/stock-movements/:id', authMiddleware, stockMovementController.getSt
 router.put('/stock-movements/:id', authMiddleware, stockMovementController.updateStockMovement);
 router.delete('/stock-movements/:id', authMiddleware, stockMovementController.deleteStockMovement);
 
-module.exports = router;
+export default router;

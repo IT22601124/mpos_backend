@@ -1,4 +1,6 @@
-const { PosSetting } = require('../../models');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { PosSetting } = require('../../models/index.js');
 
 const defaultSettings = () => ({
   payment_methods: [
@@ -109,7 +111,7 @@ const sendSettings = (res, settings) => {
   });
 };
 
-exports.getPosSettings = async (_req, res) => {
+export const getPosSettings = async (_req, res) => {
   try {
     const settings = await getCurrentSettings();
     sendSettings(res, settings);
@@ -118,7 +120,7 @@ exports.getPosSettings = async (_req, res) => {
   }
 };
 
-exports.updatePosSettings = async (req, res) => {
+export const updatePosSettings = async (req, res) => {
   try {
     const settings = await saveSettings(req, ['payment_methods', 'receipt', 'discount_rules']);
     sendSettings(res, settings);
@@ -127,7 +129,7 @@ exports.updatePosSettings = async (req, res) => {
   }
 };
 
-exports.getPaymentMethods = async (_req, res) => {
+export const getPaymentMethods = async (_req, res) => {
   try {
     const settings = serializeSettings(await getCurrentSettings());
     res.json({ success: true, payment_methods: settings.payment_methods, data: settings.payment_methods });
@@ -136,7 +138,7 @@ exports.getPaymentMethods = async (_req, res) => {
   }
 };
 
-exports.updatePaymentMethods = async (req, res) => {
+export const updatePaymentMethods = async (req, res) => {
   try {
     const body = Array.isArray(req.body) ? { payment_methods: req.body } : req.body;
     const settings = await saveSettings({ ...req, body }, ['payment_methods']);
@@ -147,7 +149,7 @@ exports.updatePaymentMethods = async (req, res) => {
   }
 };
 
-exports.getReceiptSettings = async (_req, res) => {
+export const getReceiptSettings = async (_req, res) => {
   try {
     const settings = serializeSettings(await getCurrentSettings());
     res.json({ success: true, receipt: settings.receipt, data: settings.receipt });
@@ -156,7 +158,7 @@ exports.getReceiptSettings = async (_req, res) => {
   }
 };
 
-exports.updateReceiptSettings = async (req, res) => {
+export const updateReceiptSettings = async (req, res) => {
   try {
     const body = req.body.receipt ? req.body : { receipt: req.body };
     const settings = await saveSettings({ ...req, body }, ['receipt']);
@@ -167,7 +169,7 @@ exports.updateReceiptSettings = async (req, res) => {
   }
 };
 
-exports.getDiscountRules = async (_req, res) => {
+export const getDiscountRules = async (_req, res) => {
   try {
     const settings = serializeSettings(await getCurrentSettings());
     res.json({ success: true, discount_rules: settings.discount_rules, data: settings.discount_rules });
@@ -176,7 +178,7 @@ exports.getDiscountRules = async (_req, res) => {
   }
 };
 
-exports.updateDiscountRules = async (req, res) => {
+export const updateDiscountRules = async (req, res) => {
   try {
     const body = req.body.discount_rules ? req.body : { discount_rules: req.body };
     const settings = await saveSettings({ ...req, body }, ['discount_rules']);

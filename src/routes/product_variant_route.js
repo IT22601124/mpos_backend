@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import authMiddleware from '../middlewares/authMiddleware.js';
+import * as productVariantController from '../controllers/product_variant_controller.js';
+
 const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const productVariantController = require('../controllers/product_variant_controller');
 
 router.post('/product-variants', authMiddleware, productVariantController.createProductVariant);
 router.get('/product-variants', authMiddleware, productVariantController.getAllProductVariants);
@@ -9,4 +10,4 @@ router.get('/product-variants/:id', authMiddleware, productVariantController.get
 router.put('/product-variants/:id', authMiddleware, productVariantController.updateProductVariant);
 router.delete('/product-variants/:id', authMiddleware, productVariantController.deleteProductVariant);
 
-module.exports = router;
+export default router;

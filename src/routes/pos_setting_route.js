@@ -1,10 +1,14 @@
-const express = require('express');
+import express from 'express';
+import authMiddleware from '../middlewares/authMiddleware.js';
+import * as posSettingController from '../controllers/pos_setting_controller.js';
+
 const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const posSettingController = require('../controllers/pos_setting_controller');
 
 router.get('/pos-settings', authMiddleware, posSettingController.getPosSettings);
 router.put('/pos-settings', authMiddleware, posSettingController.updatePosSettings);
+
+router.get('/pos', authMiddleware, posSettingController.getPosSettings);
+router.put('/pos', authMiddleware, posSettingController.updatePosSettings);
 
 router.get('/pos-settings/payment-methods', authMiddleware, posSettingController.getPaymentMethods);
 router.put('/pos-settings/payment-methods', authMiddleware, posSettingController.updatePaymentMethods);
@@ -15,4 +19,4 @@ router.put('/pos-settings/receipt', authMiddleware, posSettingController.updateR
 router.get('/pos-settings/discount-rules', authMiddleware, posSettingController.getDiscountRules);
 router.put('/pos-settings/discount-rules', authMiddleware, posSettingController.updateDiscountRules);
 
-module.exports = router;
+export default router;

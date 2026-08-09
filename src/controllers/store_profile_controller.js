@@ -1,4 +1,6 @@
-const { StoreProfile, BackendUser } = require('../../models');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { StoreProfile, BackendUser } = require('../../models/index.js');
 
 const includeUsers = () => [
   { model: BackendUser, as: 'creator', attributes: ['id', 'name', 'email', 'phone'] },
@@ -107,7 +109,7 @@ const getCurrentStoreProfile = async () => {
   return profile;
 };
 
-exports.getStoreProfile = async (_req, res) => {
+export const getStoreProfile = async (_req, res) => {
   try {
     const profile = await getCurrentStoreProfile();
 
@@ -120,7 +122,7 @@ exports.getStoreProfile = async (_req, res) => {
   }
 };
 
-exports.saveStoreProfile = async (req, res) => {
+export const saveStoreProfile = async (req, res) => {
   try {
     const payload = buildPayload(req.body);
     const existing = await StoreProfile.findOne({ order: [['id', 'ASC']] });
@@ -161,7 +163,7 @@ exports.saveStoreProfile = async (req, res) => {
   }
 };
 
-exports.uploadStoreLogo = async (req, res) => {
+export const uploadStoreLogo = async (req, res) => {
   try {
     const uploadedFile = req.file || (req.files && (req.files.logo || req.files.file || req.files.image || [])[0]);
 

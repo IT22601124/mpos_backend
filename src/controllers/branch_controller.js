@@ -1,6 +1,8 @@
-const { Branch } = require('../../models');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { Branch } = require('../../models/index.js');
 
-exports.createBranch = async (req, res) => {
+export const createBranch = async (req, res) => {
   try {
     const { name } = req.body;
 
@@ -15,7 +17,7 @@ exports.createBranch = async (req, res) => {
   }
 };
 
-exports.getAllBranches = async (_req, res) => {
+export const getAllBranches = async (_req, res) => {
   try {
     const branches = await Branch.findAll({
       order: [['id', 'ASC']]
@@ -30,7 +32,7 @@ exports.getAllBranches = async (_req, res) => {
   }
 };
 
-exports.getBranchById = async (req, res) => {
+export const getBranchById = async (req, res) => {
   try {
     const branch = await Branch.findByPk(req.params.id);
 
@@ -47,7 +49,7 @@ exports.getBranchById = async (req, res) => {
   }
 };
 
-exports.updateBranch = async (req, res) => {
+export const updateBranch = async (req, res) => {
   try {
     const branch = await Branch.findByPk(req.params.id);
 
@@ -68,7 +70,7 @@ exports.updateBranch = async (req, res) => {
   }
 };
 
-exports.deleteBranch = async (req, res) => {
+export const deleteBranch = async (req, res) => {
   try {
     const branch = await Branch.findByPk(req.params.id);
 

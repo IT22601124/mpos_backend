@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import authMiddleware from '../middlewares/authMiddleware.js';
+import * as posSaleController from '../controllers/pos_sale_controller.js';
+
 const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const posSaleController = require('../controllers/pos_sale_controller');
 
 router.post('/pos-sales', authMiddleware, posSaleController.createPosSale);
 router.get('/pos-sales', authMiddleware, posSaleController.getAllPosSales);
@@ -16,7 +17,8 @@ router.get('/pos-sales/reports/payments', authMiddleware, posSaleController.getP
 router.get('/pos-sales/reports/tax-discounts', authMiddleware, posSaleController.getPosSalesTaxDiscountsReport);
 router.get('/pos-sales/reports/credit', authMiddleware, posSaleController.getPosSalesCreditReport);
 router.get('/pos-sales/:id', authMiddleware, posSaleController.getPosSaleById);
+router.put('/pos-sales/:id', authMiddleware, posSaleController.updatePosSale);
 router.put('/pos-sales/:id/status', authMiddleware, posSaleController.updatePosSaleStatus);
 router.delete('/pos-sales/:id', authMiddleware, posSaleController.deletePosSale);
 
-module.exports = router;
+export default router;

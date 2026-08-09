@@ -1,21 +1,42 @@
-const { BackendUser, Role } = require('../../models');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { BackendUser, Role, Branch } = require('../../models/index.js');
 
-exports.createBackendUser = async (req, res) => {
+export const createBackendUser = async (req, res) => {
   try {
-    const { name, email, phone, password, role_id, branch_id, designation, department, salary, shift, emergency_contact, arrival_time, leave_time, salary_paid } = req.body;
+    let { name, email, phone, password, role_id, branch_id, role, branch, designation, department, salary, shift, emergency_contact, arrival_time, leave_time, salary_paid } = req.body;
     
-    // Check if required parameters are missing to trigger validation error manually if database doesn't catch it
-    if (!name || !email || !password || role_id === undefined || branch_id === undefined) {
-      return res.status(500).json({ error: 'Validation error' });
+    // Resolve role_id if missing or passed as role name string
+    if (role_id === undefined || role_id === null) {
+      if (role) {
+        const foundRole = await Role.findOne({ where: { name: role } });
+        if (foundRole) role_id = foundRole.id;
+      }
+      if (!role_id) role_id = 2; // Default to role_id 2 (Cashier/Member)
     }
+
+    // Resolve branch_id if missing or passed as branch name string
+    if (branch_id === undefined || branch_id === null) {
+      if (branch) {
+        const foundBranch = await Branch.findOne({ where: { name: branch } });
+        if (foundBranch) branch_id = foundBranch.id;
+      }
+      if (!branch_id) branch_id = 1; // Default to branch_id 1
+    }
+
+    if (!name || !phone) {
+      return res.status(400).json({ error: 'Name and phone are required' });
+    }
+
+    const userPassword = password || '123456';
 
     const newUser = await BackendUser.create({
       name,
-      email,
+      email: email || `${phone.replace(/\s+/g, '')}@company.com`,
       phone,
-      password,
-      role_id,
-      branch_id,
+      password: userPassword,
+      role_id: Number(role_id),
+      branch_id: Number(branch_id),
       designation,
       department,
       salary,
@@ -23,25 +44,32 @@ exports.createBackendUser = async (req, res) => {
       emergency_contact,
       arrival_time,
       leave_time,
-      salary_paid
+      salary_paid: salary_paid ?? false,
     });
 
-    const userJson = newUser.toJSON();
+    const userWithAssociations = await BackendUser.findByPk(newUser.id, {
+      include: [
+        {
+          model: Role,
+          as: 'role',
+          attributes: ['name'],
+        },
+      ],
+    });
+
+    const userJson = (userWithAssociations || newUser).toJSON();
     delete userJson.password;
 
     res.status(201).json(userJson);
   } catch (error) {
-    let errorMsg = error.message;
-    if (error.name === 'SequelizeValidationError' || error.name === 'SequelizeUniqueConstraintError') {
-      errorMsg = 'Validation error';
-    }
+    console.error('Error creating backend user:', error);
     res.status(500).json({
-      error: errorMsg
+      error: error.message || 'Error creating user',
     });
   }
 };
 
-exports.loginBackendUser = async (req, res) => {
+export const loginBackendUser = async (req, res) => {
   try {
     const { phone, password } = req.body;
     const user = await BackendUser.findOne({
@@ -81,7 +109,7 @@ exports.loginBackendUser = async (req, res) => {
   }
 }
 
-exports.getAllBackendUsers = async (req, res) => {
+export const getAllBackendUsers = async (req, res) => {
   try {
     const users = await BackendUser.findAll({
       include: [
@@ -115,7 +143,7 @@ exports.getAllBackendUsers = async (req, res) => {
   }
 }
 
-exports.verifyToken = async (req, res) => {
+export const verifyToken = async (req, res) => {
   try {
     const token = req.headers.authorization.split(' ')[1];
     const user = await BackendUser.findOne({ where: { access_token: token } });
@@ -135,40 +163,64 @@ exports.verifyToken = async (req, res) => {
   }
 }
 
-exports.updateBackendUser = async (req, res) => {
+export const updateBackendUser = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, phone, role_id, branch_id, status, designation, department, salary, shift, emergency_contact, arrival_time, leave_time, salary_paid } = req.body;
+    let { name, email, phone, role_id, branch_id, role, branch, status, designation, department, salary, shift, emergency_contact, arrival_time, leave_time, salary_paid } = req.body;
     
     const user = await BackendUser.findByPk(id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    if (role_id === undefined || role_id === null) {
+      if (role) {
+        const foundRole = await Role.findOne({ where: { name: role } });
+        if (foundRole) role_id = foundRole.id;
+      }
+    }
+
+    if (branch_id === undefined || branch_id === null) {
+      if (branch) {
+        const foundBranch = await Branch.findOne({ where: { name: branch } });
+        if (foundBranch) branch_id = foundBranch.id;
+      }
+    }
+
     await user.update({
-      name,
-      email,
-      phone,
-      role_id,
-      branch_id,
-      status: status ? status.toLowerCase() : user.status,
-      designation,
-      department,
-      salary,
-      shift,
-      emergency_contact,
-      arrival_time,
-      leave_time,
-      salary_paid
+      ...(name ? { name } : {}),
+      ...(email !== undefined ? { email } : {}),
+      ...(phone ? { phone } : {}),
+      ...(role_id !== undefined ? { role_id: Number(role_id) } : {}),
+      ...(branch_id !== undefined ? { branch_id: Number(branch_id) } : {}),
+      ...(status ? { status: status.toLowerCase() } : {}),
+      ...(designation !== undefined ? { designation } : {}),
+      ...(department !== undefined ? { department } : {}),
+      ...(salary !== undefined ? { salary } : {}),
+      ...(shift !== undefined ? { shift } : {}),
+      ...(emergency_contact !== undefined ? { emergency_contact } : {}),
+      ...(arrival_time !== undefined ? { arrival_time } : {}),
+      ...(leave_time !== undefined ? { leave_time } : {}),
+      ...(salary_paid !== undefined ? { salary_paid } : {}),
     });
 
-    res.json(user);
+    const userWithAssociations = await BackendUser.findByPk(user.id, {
+      include: [
+        {
+          model: Role,
+          as: 'role',
+          attributes: ['name'],
+        },
+      ],
+    });
+
+    res.json(userWithAssociations || user);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-exports.logoutBackendUser = async (req, res) => {
+export const logoutBackendUser = async (req, res) => {
   try {
     const userId = req.user.id;
     await BackendUser.update(

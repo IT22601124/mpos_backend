@@ -1,3 +1,5 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const {
   sequelize,
   Sequelize,
@@ -13,7 +15,7 @@ const {
   StockMovement,
   CustomerCreditTransaction,
   StoreProfile
-} = require('../../models');
+} = require('../../models/index.js');
 
 const { Op } = Sequelize;
 
@@ -79,7 +81,8 @@ const requestError = (message, statusCode = 400) => {
   return error;
 };
 
-const normalizeItems = (items = []) => items.map((item) => {
+const normalizeItems = (items = []) => items.map((rawItem) => {
+  const item = { ...rawItem, qty: rawItem.qty ?? rawItem.quantity };
   if (!item.product_id) {
     throw requestError('Every sale item must have product_id');
   }
@@ -92,12 +95,11 @@ const normalizeItems = (items = []) => items.map((item) => {
 
   const qty = toNumber(item.qty);
   const unitPrice = toNumber(item.unit_price);
-  const discount = toNumber(item.discount);
-  const tax = toNumber(item.tax);
+  const discount = toNumber(item.discount ?? item.discount_amount);
+  const tax = toNumber(item.tax ?? item.tax_amount);
   const lineTotal = item.line_total === undefined
     ? roundMoney((qty * unitPrice) - discount + tax)
     : roundMoney(toNumber(item.line_total));
-
   if (qty <= 0) {
     throw requestError('Sale item qty must be greater than zero');
   }
@@ -108,6 +110,7 @@ const normalizeItems = (items = []) => items.map((item) => {
 
   return {
     product_id: item.product_id,
+    variant_id: item.variant_id || null,
     qty,
     unit_price: unitPrice,
     discount,
@@ -133,7 +136,14 @@ const calculateTotals = (items, payments = []) => {
   };
 };
 
-const buildSaleWhere = (query) => {
+const isUserAdmin = (user) => {
+  if (!user) return true;
+  if (user.role_id === 1 || user.role_id === '1') return true;
+  if (user.role_name && String(user.role_name).toLowerCase().includes('admin')) return true;
+  return false;
+};
+
+const buildSaleWhere = (query = {}, reqUser = null) => {
   const where = {};
 
   ['status', 'customer_id', 'cashier_id', 'register_session_id', 'register_no', 'shift_no', 'sale_no'].forEach((field) => {
@@ -142,21 +152,35 @@ const buildSaleWhere = (query) => {
     }
   });
 
+  const isAdmin = isUserAdmin(reqUser);
+
+  if (!isAdmin && reqUser && reqUser.id) {
+    where.cashier_id = reqUser.id;
+  } else if (isAdmin) {
+    if (query.scope === 'own' && reqUser && reqUser.id) {
+      where.cashier_id = reqUser.id;
+    }
+  }
+
   if (query.from || query.to) {
     where.sold_at = {};
     if (query.from) {
       where.sold_at[Op.gte] = new Date(query.from);
     }
     if (query.to) {
-      where.sold_at[Op.lte] = new Date(query.to);
+      const toDate = new Date(query.to);
+      if (typeof query.to === 'string' && query.to.length <= 10) {
+        toDate.setHours(23, 59, 59, 999);
+      }
+      where.sold_at[Op.lte] = toDate;
     }
   }
 
   return where;
 };
 
-const reportSaleWhere = (query) => ({
-  ...buildSaleWhere(query),
+const reportSaleWhere = (query, reqUser = null) => ({
+  ...buildSaleWhere(query, reqUser),
   status: query.status || 'completed'
 });
 
@@ -176,18 +200,76 @@ const paymentLabel = (method) => {
   return labels[paymentKey(method)] || method || 'Unknown';
 };
 
-const paymentAmount = (sale, method) => roundMoney((sale.payments || [])
+const paymentAmountExplicit = (sale, method) => roundMoney((sale.payments || [])
   .filter((payment) => paymentKey(payment.method) === method)
   .reduce((sum, payment) => sum + toNumber(payment.amount), 0));
 
-const creditAmountForSale = (sale) => {
-  const creditPayment = paymentAmount(sale, 'credit');
-  return creditPayment || Math.max(roundMoney(toNumber(sale.grand_total) - toNumber(sale.paid_amount)), 0);
+const paymentAmount = (sale, method) => {
+  const targetKey = paymentKey(method);
+  const explicit = paymentAmountExplicit(sale, targetKey);
+
+  if (explicit > 0) {
+    return explicit;
+  }
+
+  if (targetKey === 'credit') {
+    const grandTotal = toNumber(sale.grand_total);
+    const paidAmount = toNumber(sale.paid_amount);
+    if (paidAmount < grandTotal) {
+      return Math.max(roundMoney(grandTotal - paidAmount), 0);
+    }
+    return 0;
+  }
+
+  if (targetKey === 'cash') {
+    const totalNonCredit = nonCreditPaidAmountForSale(sale);
+    const otherNonCash = paymentAmountExplicit(sale, 'card') +
+      paymentAmountExplicit(sale, 'bank_transfer') +
+      paymentAmountExplicit(sale, 'mobile') +
+      paymentAmountExplicit(sale, 'voucher');
+
+    return Math.max(roundMoney(totalNonCredit - otherNonCash), 0);
+  }
+
+  return 0;
 };
 
-const nonCreditPaidAmountForSale = (sale) => roundMoney((sale.payments || [])
-  .filter((payment) => paymentKey(payment.method) !== 'credit')
-  .reduce((sum, payment) => sum + toNumber(payment.amount), 0));
+const creditAmountForSale = (sale) => {
+  const creditPayment = paymentAmount(sale, 'credit');
+  if (creditPayment > 0) {
+    return creditPayment;
+  }
+
+  const grandTotal = toNumber(sale.grand_total);
+  const paidAmount = toNumber(sale.paid_amount);
+  if (paidAmount < grandTotal) {
+    return Math.max(roundMoney(grandTotal - paidAmount), 0);
+  }
+
+  return 0;
+};
+
+const nonCreditPaidAmountForSale = (sale) => {
+  const nonCreditSum = roundMoney((sale.payments || [])
+    .filter((payment) => paymentKey(payment.method) !== 'credit')
+    .reduce((sum, payment) => sum + toNumber(payment.amount), 0));
+
+  if (nonCreditSum > 0) {
+    return nonCreditSum;
+  }
+
+  const paidAmount = toNumber(sale.paid_amount);
+  if (paidAmount > 0) {
+    return roundMoney(paidAmount);
+  }
+
+  const creditAmount = paymentAmount(sale, 'credit');
+  if (creditAmount > 0) {
+    return Math.max(roundMoney(toNumber(sale.grand_total) - creditAmount), 0);
+  }
+
+  return 0;
+};
 
 const unitsSoldForSale = (sale) => roundMoney((sale.items || [])
   .reduce((sum, item) => sum + toNumber(item.qty), 0));
@@ -332,20 +414,20 @@ const saleReportInclude = () => [
   { model: PosSaleItem, as: 'items' }
 ];
 
-const fetchReportSales = (query, include = saleReportInclude()) => PosSale.findAll({
-  where: reportSaleWhere(query),
+const fetchReportSales = (query, reqUser = null, include = saleReportInclude()) => PosSale.findAll({
+  where: reportSaleWhere(query, reqUser),
   include,
   order: [['sold_at', 'DESC'], ['id', 'DESC']]
 });
 
-const getSalesForLastSevenDays = (query = {}) => {
+const getSalesForLastSevenDays = (query = {}, reqUser = null) => {
   const { start, end } = lastSevenDaysRange();
 
   return fetchReportSales({
     ...query,
     from: query.from || start.toISOString(),
     to: query.to || end.toISOString()
-  });
+  }, reqUser);
 };
 
 const emptySummaryReport = () => ({
@@ -392,9 +474,18 @@ const createStockMovements = async (sale, items, transaction, type = 'sale') => 
 };
 
 const applyCreditPayments = async (sale, payments, transaction, direction = 1) => {
-  const creditAmount = roundMoney(payments
-    .filter((payment) => payment.method === 'credit')
+  let creditAmount = roundMoney(payments
+    .filter((payment) => paymentKey(payment.method) === 'credit')
     .reduce((sum, payment) => sum + toNumber(payment.amount), 0));
+
+  const grandTotal = toNumber(sale.grand_total);
+  const paidAmount = nonCreditPaidAmountForSale(sale);
+  if (grandTotal > 0) {
+    const maxCredit = Math.max(roundMoney(grandTotal - paidAmount), 0);
+    if (!creditAmount || creditAmount > maxCredit) {
+      creditAmount = maxCredit;
+    }
+  }
 
   if (!creditAmount || !sale.customer_id) {
     return;
@@ -430,7 +521,7 @@ const reverseCompletedSaleEffects = async (sale, transaction) => {
   await applyCreditPayments(sale, payments, transaction, -1);
 };
 
-exports.createPosSale = async (req, res) => {
+export const createPosSale = async (req, res) => {
   try {
     const allowedStatuses = ['held', 'completed'];
     if (req.body.status && !allowedStatuses.includes(req.body.status)) {
@@ -439,7 +530,7 @@ exports.createPosSale = async (req, res) => {
 
     const sale = await sequelize.transaction(async (transaction) => {
       const items = normalizeItems(req.body.items);
-      const payments = req.body.payments || [];
+      let payments = req.body.payments || [];
 
       if (!items.length) {
         throw requestError('At least one sale item is required');
@@ -449,7 +540,39 @@ exports.createPosSale = async (req, res) => {
         throw requestError('Payments must be an array');
       }
 
+      const reqPaidAmount = req.body.paid_amount !== undefined ? toNumber(req.body.paid_amount) : null;
+      const reqCreditAmount = req.body.credit_amount !== undefined ? toNumber(req.body.credit_amount) : null;
+
+      const hasCreditPayment = payments.some((p) => paymentKey(p.method) === 'credit');
+      const hasNonCreditPayment = payments.some((p) => paymentKey(p.method) !== 'credit');
+
+      if (reqPaidAmount !== null && reqPaidAmount > 0 && !hasNonCreditPayment && (hasCreditPayment || reqCreditAmount > 0)) {
+        const defaultMethod = req.body.payment_method && paymentKey(req.body.payment_method) !== 'credit'
+          ? req.body.payment_method.toLowerCase()
+          : 'cash';
+        payments.unshift({ method: defaultMethod, amount: reqPaidAmount });
+      }
+
+      if (!hasCreditPayment && reqCreditAmount !== null && reqCreditAmount > 0) {
+        payments.push({ method: 'credit', amount: reqCreditAmount });
+      }
+
       const totals = calculateTotals(items, payments);
+      const grandTotal = req.body.grand_total ?? req.body.total_amount ?? totals.grand_total;
+
+      let finalPaidAmount = reqPaidAmount !== null
+        ? reqPaidAmount
+        : (hasCreditPayment || reqCreditAmount > 0
+            ? nonCreditPaidAmountForSale({ payments, grand_total: grandTotal })
+            : totals.paid_amount);
+
+      if ((hasCreditPayment || reqCreditAmount > 0) && finalPaidAmount >= grandTotal) {
+        const creditAmt = reqCreditAmount !== null ? reqCreditAmount : paymentAmount({ payments }, 'credit');
+        if (creditAmt > 0) {
+          finalPaidAmount = Math.max(roundMoney(grandTotal - creditAmt), 0);
+        }
+      }
+
       const saleStatus = req.body.status || 'completed';
       const saleRecord = await PosSale.create({
         sale_no: req.body.sale_no || await generateSaleNo(transaction),
@@ -459,11 +582,11 @@ exports.createPosSale = async (req, res) => {
         register_no: req.body.register_no || null,
         shift_no: req.body.shift_no || null,
         subtotal: req.body.subtotal ?? totals.subtotal,
-        discount_total: req.body.discount_total ?? totals.discount_total,
-        tax_total: req.body.tax_total ?? totals.tax_total,
-        grand_total: req.body.grand_total ?? totals.grand_total,
-        paid_amount: req.body.paid_amount ?? totals.paid_amount,
-        balance_amount: req.body.balance_amount ?? totals.balance_amount,
+        discount_total: req.body.discount_total ?? req.body.discount_amount ?? totals.discount_total,
+        tax_total: req.body.tax_total ?? req.body.tax_amount ?? totals.tax_total,
+        grand_total: grandTotal,
+        paid_amount: finalPaidAmount,
+        balance_amount: Math.max(roundMoney(grandTotal - finalPaidAmount), 0),
         status: saleStatus,
         sold_at: req.body.sold_at || new Date(),
         notes: req.body.notes || null
@@ -498,10 +621,10 @@ exports.createPosSale = async (req, res) => {
   }
 };
 
-exports.getAllPosSales = async (req, res) => {
+export const getAllPosSales = async (req, res) => {
   try {
     const sales = await PosSale.findAll({
-      where: buildSaleWhere(req.query),
+      where: buildSaleWhere(req.query, req.user),
       include: saleInclude(),
       order: [['sold_at', 'DESC'], ['id', 'DESC']]
     });
@@ -512,7 +635,7 @@ exports.getAllPosSales = async (req, res) => {
   }
 };
 
-exports.getPosSaleById = async (req, res) => {
+export const getPosSaleById = async (req, res) => {
   try {
     const sale = await PosSale.findByPk(req.params.id, { include: saleInclude() });
 
@@ -526,7 +649,7 @@ exports.getPosSaleById = async (req, res) => {
   }
 };
 
-exports.updatePosSaleStatus = async (req, res) => {
+export const updatePosSaleStatus = async (req, res) => {
   try {
     const allowedStatuses = ['held', 'completed', 'voided', 'refunded'];
     const nextStatus = req.body.status;
@@ -589,7 +712,7 @@ exports.updatePosSaleStatus = async (req, res) => {
   }
 };
 
-exports.deletePosSale = async (req, res) => {
+export const deletePosSale = async (req, res) => {
   try {
     const deleted = await sequelize.transaction(async (transaction) => {
       const sale = await PosSale.findByPk(req.params.id, { transaction });
@@ -630,9 +753,52 @@ exports.deletePosSale = async (req, res) => {
   }
 };
 
-exports.getPosSalesSummaryReport = async (req, res) => {
+export const updatePosSale = async (req, res) => {
   try {
-    const sales = await fetchReportSales(req.query);
+    const saleId = req.params.id;
+    const sale = await sequelize.transaction(async (transaction) => {
+      const saleRecord = await PosSale.findByPk(saleId, { transaction });
+      if (!saleRecord) return null;
+
+      const updates = {};
+      if (req.body.customer_id !== undefined) updates.customer_id = req.body.customer_id || null;
+      if (req.body.notes !== undefined) updates.notes = req.body.notes;
+      if (req.body.status !== undefined && ['completed', 'held', 'voided', 'refunded'].includes(req.body.status)) {
+        updates.status = req.body.status;
+      }
+      if (req.body.paid_amount !== undefined) updates.paid_amount = toNumber(req.body.paid_amount);
+      if (req.body.grand_total !== undefined) {
+        updates.grand_total = toNumber(req.body.grand_total);
+        const paid = updates.paid_amount !== undefined ? updates.paid_amount : toNumber(saleRecord.paid_amount);
+        updates.balance_amount = Math.max(roundMoney(updates.grand_total - paid), 0);
+      }
+
+      await saleRecord.update(updates, { transaction });
+
+      if (req.body.payment_method) {
+        const payments = await PosSalePayment.findAll({ where: { sale_id: saleRecord.id }, transaction });
+        if (payments.length > 0) {
+          await payments[0].update({ method: req.body.payment_method.toLowerCase() }, { transaction });
+        }
+      }
+
+      return saleRecord;
+    });
+
+    if (!sale) {
+      return res.status(404).json({ error: 'pos_sale not found' });
+    }
+
+    const saleWithDetails = await PosSale.findByPk(sale.id, { include: saleInclude() });
+    res.json({ success: true, pos_sale: saleWithDetails });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+};
+
+export const getPosSalesSummaryReport = async (req, res) => {
+  try {
+    const sales = await fetchReportSales(req.query, req.user);
     const summary = sales.reduce((totals, sale) => {
       const totalSales = toNumber(sale.grand_total);
       const creditAmount = creditAmountForSale(sale);
@@ -660,11 +826,11 @@ exports.getPosSalesSummaryReport = async (req, res) => {
   }
 };
 
-exports.getPosSalesReport = async (req, res) => {
+export const getPosSalesReport = async (req, res) => {
   try {
     const hasDateRange = req.query.from || req.query.to;
     const range = resolveSevenDayRange(req.query);
-    const sales = hasDateRange ? await fetchReportSales(req.query) : await getSalesForLastSevenDays(req.query);
+    const sales = hasDateRange ? await fetchReportSales(req.query, req.user) : await getSalesForLastSevenDays(req.query, req.user);
     const mappedSales = sales.map(mapRecentSale);
 
     res.json({
@@ -677,9 +843,9 @@ exports.getPosSalesReport = async (req, res) => {
   }
 };
 
-exports.getPosSalesCashiersReport = async (req, res) => {
+export const getPosSalesCashiersReport = async (req, res) => {
   try {
-    const sales = await fetchReportSales(req.query);
+    const sales = await fetchReportSales(req.query, req.user);
     const cashierMap = new Map();
 
     sales.forEach((sale) => {
@@ -724,9 +890,9 @@ exports.getPosSalesCashiersReport = async (req, res) => {
   }
 };
 
-exports.getDashboardReport = async (req, res) => {
+export const getDashboardReport = async (req, res) => {
   try {
-    const sales = await getSalesForLastSevenDays(req.query);
+    const sales = await getSalesForLastSevenDays(req.query, req.user);
     const summary = sales.reduce((totals, sale) => {
       const totalSales = toNumber(sale.grand_total);
       const creditAmount = creditAmountForSale(sale);
@@ -786,9 +952,9 @@ exports.getDashboardReport = async (req, res) => {
   }
 };
 
-exports.getPosSalesProductsReport = async (req, res) => {
+export const getPosSalesProductsReport = async (req, res) => {
   try {
-    const sales = await fetchReportSales(req.query, [
+    const sales = await fetchReportSales(req.query, req.user, [
       {
         model: PosSaleItem,
         as: 'items',
@@ -835,9 +1001,9 @@ exports.getPosSalesProductsReport = async (req, res) => {
   }
 };
 
-exports.getPosSalesItemsReport = exports.getPosSalesProductsReport;
+export const getPosSalesItemsReport = getPosSalesProductsReport;
 
-exports.getPosSalesInventoryReport = async (req, res) => {
+export const getPosSalesInventoryReport = async (req, res) => {
   try {
     const productWhere = {};
     const movementWhere = {};
@@ -886,27 +1052,60 @@ exports.getPosSalesInventoryReport = async (req, res) => {
   }
 };
 
-exports.getPosSalesPaymentsReport = async (req, res) => {
+export const getPosSalesPaymentsReport = async (req, res) => {
   try {
-    const sales = await fetchReportSales(req.query);
+    const sales = await fetchReportSales(req.query, req.user);
     const paymentMap = new Map();
 
     sales.forEach((sale) => {
-      sale.payments.forEach((payment) => {
-        const method = paymentKey(payment.method);
-        const existing = paymentMap.get(method) || {
-          method: paymentLabel(payment.method),
-          sale_ids: new Set(),
-          paid_amount: 0,
-          total_amount: 0
-        };
+      if (sale.payments && sale.payments.length > 0) {
+        sale.payments.forEach((payment) => {
+          const method = paymentKey(payment.method);
+          const existing = paymentMap.get(method) || {
+            method: paymentLabel(payment.method),
+            sale_ids: new Set(),
+            paid_amount: 0,
+            total_amount: 0
+          };
 
-        existing.sale_ids.add(sale.id);
-        existing.paid_amount = roundMoney(existing.paid_amount + toNumber(payment.amount));
-        existing.total_amount = roundMoney(existing.total_amount + toNumber(payment.amount));
+          existing.sale_ids.add(sale.id);
+          existing.paid_amount = roundMoney(existing.paid_amount + toNumber(payment.amount));
+          existing.total_amount = roundMoney(existing.total_amount + toNumber(payment.amount));
 
-        paymentMap.set(method, existing);
-      });
+          paymentMap.set(method, existing);
+        });
+      } else {
+        const cashPaid = paymentAmount(sale, 'cash');
+        const creditAmt = creditAmountForSale(sale);
+
+        if (cashPaid > 0) {
+          const method = 'cash';
+          const existing = paymentMap.get(method) || {
+            method: paymentLabel('cash'),
+            sale_ids: new Set(),
+            paid_amount: 0,
+            total_amount: 0
+          };
+          existing.sale_ids.add(sale.id);
+          existing.paid_amount = roundMoney(existing.paid_amount + cashPaid);
+          existing.total_amount = roundMoney(existing.total_amount + cashPaid);
+          paymentMap.set(method, existing);
+        }
+
+        if (creditAmt > 0) {
+          const method = 'credit';
+          const existing = paymentMap.get(method) || {
+            method: paymentLabel('credit'),
+            sale_ids: new Set(),
+            paid_amount: 0,
+            total_amount: 0
+          };
+          existing.sale_ids.add(sale.id);
+          existing.paid_amount = roundMoney(existing.paid_amount + creditAmt);
+          existing.total_amount = roundMoney(existing.total_amount + creditAmt);
+          paymentMap.set(method, existing);
+        }
+      }
     });
 
     res.json({
@@ -922,9 +1121,9 @@ exports.getPosSalesPaymentsReport = async (req, res) => {
   }
 };
 
-exports.getPosSalesTaxDiscountsReport = async (req, res) => {
+export const getPosSalesTaxDiscountsReport = async (req, res) => {
   try {
-    const sales = await fetchReportSales(req.query);
+    const sales = await fetchReportSales(req.query, req.user);
     const taxAmount = roundMoney(sales.reduce((sum, sale) => sum + toNumber(sale.tax_total), 0));
     const discountAmount = roundMoney(sales.reduce((sum, sale) => sum + toNumber(sale.discount_total), 0));
     const taxableAmount = roundMoney(sales.reduce((sum, sale) => sum + toNumber(sale.subtotal) - toNumber(sale.discount_total), 0));
@@ -945,9 +1144,9 @@ exports.getPosSalesTaxDiscountsReport = async (req, res) => {
   }
 };
 
-exports.getPosSalesCreditReport = async (req, res) => {
+export const getPosSalesCreditReport = async (req, res) => {
   try {
-    const sales = await fetchReportSales(req.query);
+    const sales = await fetchReportSales(req.query, req.user);
     const now = new Date();
 
     res.json({

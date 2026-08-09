@@ -1,6 +1,8 @@
-const { Role } = require('../../models');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { Role } = require('../../models/index.js');
 
-exports.createRole = async (req, res) => {
+export const createRole = async (req, res) => {
   try {
     const { name } = req.body;
 
@@ -15,7 +17,7 @@ exports.createRole = async (req, res) => {
   }
 };
 
-exports.getAllRoles = async (_req, res) => {
+export const getAllRoles = async (_req, res) => {
   try {
     const roles = await Role.findAll({
       order: [['id', 'ASC']]
@@ -30,7 +32,7 @@ exports.getAllRoles = async (_req, res) => {
   }
 };
 
-exports.getRoleById = async (req, res) => {
+export const getRoleById = async (req, res) => {
   try {
     const role = await Role.findByPk(req.params.id);
 
@@ -47,7 +49,7 @@ exports.getRoleById = async (req, res) => {
   }
 };
 
-exports.updateRole = async (req, res) => {
+export const updateRole = async (req, res) => {
   try {
     const role = await Role.findByPk(req.params.id);
 
@@ -68,7 +70,7 @@ exports.updateRole = async (req, res) => {
   }
 };
 
-exports.deleteRole = async (req, res) => {
+export const deleteRole = async (req, res) => {
   try {
     const role = await Role.findByPk(req.params.id);
 

@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import authMiddleware from '../middlewares/authMiddleware.js';
+import * as productImageController from '../controllers/product_image_controller.js';
+
 const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const productImageController = require('../controllers/product_image_controller');
 
 router.post('/product-images', authMiddleware, productImageController.createProductImage);
 router.get('/product-images', authMiddleware, productImageController.getAllProductImages);
@@ -9,4 +10,4 @@ router.get('/product-images/:id', authMiddleware, productImageController.getProd
 router.put('/product-images/:id', authMiddleware, productImageController.updateProductImage);
 router.delete('/product-images/:id', authMiddleware, productImageController.deleteProductImage);
 
-module.exports = router;
+export default router;

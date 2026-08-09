@@ -1,3 +1,5 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const {
   Product,
   Category,
@@ -9,7 +11,7 @@ const {
   ProductImage,
   ProductVariant,
   BackendUser
-} = require('../../models');
+} = require('../../models/index.js');
 
 const productInclude = () => [
   { model: Category, as: 'category' },
@@ -99,7 +101,7 @@ const productErrorResponse = (res, error) => {
   });
 };
 
-exports.createProduct = async (req, res) => {
+export const createProduct = async (req, res) => {
   try {
     const payload = normalizeProductPayload(req.body);
     const relationError = await validateProductRelations(payload);
@@ -125,7 +127,7 @@ exports.createProduct = async (req, res) => {
   }
 };
 
-exports.getAllProducts = async (_req, res) => {
+export const getAllProducts = async (_req, res) => {
   try {
     const products = await Product.findAll({
       include: productInclude(),
@@ -141,7 +143,7 @@ exports.getAllProducts = async (_req, res) => {
   }
 };
 
-exports.getProductById = async (req, res) => {
+export const getProductById = async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id, {
       include: productInclude()
@@ -160,7 +162,7 @@ exports.getProductById = async (req, res) => {
   }
 };
 
-exports.updateProduct = async (req, res) => {
+export const updateProduct = async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id);
 
@@ -189,7 +191,7 @@ exports.updateProduct = async (req, res) => {
   }
 };
 
-exports.deleteProduct = async (req, res) => {
+export const deleteProduct = async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id);
 
@@ -208,7 +210,7 @@ exports.deleteProduct = async (req, res) => {
   }
 };
 
-exports.addSupplierToProduct = async (req, res) => {
+export const addSupplierToProduct = async (req, res) => {
   try {
     const productSupplier = await ProductSupplier.create({
       product_id: req.params.productId,

@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import authMiddleware from '../middlewares/authMiddleware.js';
+import * as productBatchController from '../controllers/product_batch_controller.js';
+
 const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const productBatchController = require('../controllers/product_batch_controller');
 
 router.post('/product-batches', authMiddleware, productBatchController.createProductBatch);
 router.get('/product-batches', authMiddleware, productBatchController.getAllProductBatches);
@@ -9,4 +10,4 @@ router.get('/product-batches/:id', authMiddleware, productBatchController.getPro
 router.put('/product-batches/:id', authMiddleware, productBatchController.updateProductBatch);
 router.delete('/product-batches/:id', authMiddleware, productBatchController.deleteProductBatch);
 
-module.exports = router;
+export default router;

@@ -1,13 +1,16 @@
-const { Brand } = require('../../models');
-const { createCrudController } = require('./crud_controller_factory');
+import { createRequire } from 'module';
+import { createCrudController } from './crud_controller_factory.js';
+
+const require = createRequire(import.meta.url);
+const { Brand } = require('../../models/index.js');
 
 const controller = createCrudController(Brand, {
   singular: 'brand',
   plural: 'brands'
 });
 
-exports.createBrand = controller.create;
-exports.getAllBrands = controller.list;
-exports.getBrandById = controller.getById;
-exports.updateBrand = controller.update;
-exports.deleteBrand = controller.remove;
+export const createBrand = controller.create;
+export const getAllBrands = controller.list;
+export const getBrandById = controller.getById;
+export const updateBrand = controller.update;
+export const deleteBrand = controller.remove;

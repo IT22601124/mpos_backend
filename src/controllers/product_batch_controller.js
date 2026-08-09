@@ -1,5 +1,8 @@
-const { ProductBatch, Product } = require('../../models');
-const { createCrudController } = require('./crud_controller_factory');
+import { createRequire } from 'module';
+import { createCrudController } from './crud_controller_factory.js';
+
+const require = createRequire(import.meta.url);
+const { ProductBatch, Product } = require('../../models/index.js');
 
 const controller = createCrudController(ProductBatch, {
   singular: 'product_batch',
@@ -9,8 +12,8 @@ const controller = createCrudController(ProductBatch, {
   ]
 });
 
-exports.createProductBatch = controller.create;
-exports.getAllProductBatches = controller.list;
-exports.getProductBatchById = controller.getById;
-exports.updateProductBatch = controller.update;
-exports.deleteProductBatch = controller.remove;
+export const createProductBatch = controller.create;
+export const getAllProductBatches = controller.list;
+export const getProductBatchById = controller.getById;
+export const updateProductBatch = controller.update;
+export const deleteProductBatch = controller.remove;

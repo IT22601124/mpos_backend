@@ -1,13 +1,16 @@
-const { Category } = require('../../models');
-const { createCrudController } = require('./crud_controller_factory');
+import { createRequire } from 'module';
+import { createCrudController } from './crud_controller_factory.js';
+
+const require = createRequire(import.meta.url);
+const { Category } = require('../../models/index.js');
 
 const controller = createCrudController(Category, {
   singular: 'category',
   plural: 'categories'
 });
 
-exports.createCategory = controller.create;
-exports.getAllCategories = controller.list;
-exports.getCategoryById = controller.getById;
-exports.updateCategory = controller.update;
-exports.deleteCategory = controller.remove;
+export const createCategory = controller.create;
+export const getAllCategories = controller.list;
+export const getCategoryById = controller.getById;
+export const updateCategory = controller.update;
+export const deleteCategory = controller.remove;

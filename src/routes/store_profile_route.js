@@ -1,10 +1,14 @@
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const multer = require('multer');
+import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
+import { fileURLToPath } from 'url';
+import authMiddleware from '../middlewares/authMiddleware.js';
+import * as storeProfileController from '../controllers/store_profile_controller.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const router = express.Router();
-const authMiddleware = require('../middlewares/authMiddleware');
-const storeProfileController = require('../controllers/store_profile_controller');
 
 const uploadDir = path.join(__dirname, '..', '..', 'public', 'uploads', 'store');
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -62,4 +66,4 @@ router.put('/settings/store-profile', authMiddleware, storeProfileController.sav
 router.post('/settings/store-profile', authMiddleware, storeProfileController.saveStoreProfile);
 router.post('/settings/store-profile/logo', authMiddleware, uploadLogo, storeProfileController.uploadStoreLogo);
 
-module.exports = router;
+export default router;

@@ -1,5 +1,8 @@
-const { Customer, CustomerCreditTransaction } = require('../../models');
-const { createCrudController } = require('./crud_controller_factory');
+import { createRequire } from 'module';
+import { createCrudController } from './crud_controller_factory.js';
+
+const require = createRequire(import.meta.url);
+const { Customer, CustomerCreditTransaction } = require('../../models/index.js');
 
 const controller = createCrudController(Customer, {
   singular: 'customer',
@@ -9,8 +12,8 @@ const controller = createCrudController(Customer, {
   ]
 });
 
-exports.createCustomer = controller.create;
-exports.getAllCustomers = controller.list;
-exports.getCustomerById = controller.getById;
-exports.updateCustomer = controller.update;
-exports.deleteCustomer = controller.remove;
+export const createCustomer = controller.create;
+export const getAllCustomers = controller.list;
+export const getCustomerById = controller.getById;
+export const updateCustomer = controller.update;
+export const deleteCustomer = controller.remove;

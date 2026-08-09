@@ -1,4 +1,4 @@
-exports.createCrudController = (Model, options) => {
+export const createCrudController = (Model, options) => {
   const {
     singular,
     plural,

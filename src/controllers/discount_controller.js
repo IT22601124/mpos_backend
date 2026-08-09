@@ -1,13 +1,16 @@
-const { Discount } = require('../../models');
-const { createCrudController } = require('./crud_controller_factory');
+import { createRequire } from 'module';
+import { createCrudController } from './crud_controller_factory.js';
+
+const require = createRequire(import.meta.url);
+const { Discount } = require('../../models/index.js');
 
 const controller = createCrudController(Discount, {
   singular: 'discount',
   plural: 'discounts'
 });
 
-exports.createDiscount = controller.create;
-exports.getAllDiscounts = controller.list;
-exports.getDiscountById = controller.getById;
-exports.updateDiscount = controller.update;
-exports.deleteDiscount = controller.remove;
+export const createDiscount = controller.create;
+export const getAllDiscounts = controller.list;
+export const getDiscountById = controller.getById;
+export const updateDiscount = controller.update;
+export const deleteDiscount = controller.remove;
