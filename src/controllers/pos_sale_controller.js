@@ -57,6 +57,29 @@ const lastSevenDaysRange = () => {
   return { start, end };
 };
 
+const getRangeForPeriod = (period = 'weekly') => {
+  const now = new Date();
+  const end = new Date(now);
+  let start;
+
+  switch (period.toLowerCase()) {
+    case 'daily':
+      start = new Date(now);
+      break;
+    case 'monthly':
+      start = addDays(now, -29);
+      break;
+    case 'weekly':
+    default:
+      start = addDays(now, -6);
+      break;
+  }
+
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+};
+
 const resolveSevenDayRange = (query = {}) => {
   if (query.from && query.to) {
     return { start: new Date(query.from), end: new Date(query.to) };
@@ -146,7 +169,7 @@ const isUserAdmin = (user) => {
 const buildSaleWhere = (query = {}, reqUser = null) => {
   const where = {};
 
-  ['status', 'customer_id', 'cashier_id', 'register_session_id', 'register_no', 'shift_no', 'sale_no'].forEach((field) => {
+  ['status', 'customer_id', 'register_session_id', 'register_no', 'shift_no', 'sale_no'].forEach((field) => {
     if (query[field] !== undefined && query[field] !== '') {
       where[field] = query[field];
     }
@@ -159,6 +182,8 @@ const buildSaleWhere = (query = {}, reqUser = null) => {
   } else if (isAdmin) {
     if (query.scope === 'own' && reqUser && reqUser.id) {
       where.cashier_id = reqUser.id;
+    } else if (query.cashier_id !== undefined && query.cashier_id !== '') {
+      where.cashier_id = query.cashier_id;
     }
   }
 
@@ -390,10 +415,13 @@ const buildDailyTotals = (sales, fromDate, toDate) => {
 const applyDashboardAliases = (summary, targetValue = 0) => {
   const todayTarget = toNumber(targetValue);
   const netSales = toNumber(summary.total_sales);
+  const totalCost = toNumber(summary.total_cost);
+  const taxAmount = toNumber(summary.tax_amount);
 
   return {
     ...summary,
     net_sales: netSales,
+    net_profit: roundMoney(netSales - taxAmount - totalCost),
     collected: toNumber(summary.paid_amount),
     credit_due: toNumber(summary.credit_amount),
     items_sold: toNumber(summary.units_sold),
@@ -411,7 +439,11 @@ const saleReportInclude = () => [
     include: [{ model: Role, as: 'role', attributes: ['id', 'name'] }]
   },
   { model: PosSalePayment, as: 'payments' },
-  { model: PosSaleItem, as: 'items' }
+  {
+    model: PosSaleItem,
+    as: 'items',
+    include: [{ model: Product, as: 'product' }]
+  }
 ];
 
 const fetchReportSales = (query, reqUser = null, include = saleReportInclude()) => PosSale.findAll({
@@ -441,7 +473,8 @@ const emptySummaryReport = () => ({
   discount_amount: 0,
   cash_sales: 0,
   card_sales: 0,
-  credit_sales: 0
+  credit_sales: 0,
+  total_cost: 0
 });
 
 const generateSaleNo = async (transaction) => {
@@ -803,7 +836,14 @@ export const getPosSalesSummaryReport = async (req, res) => {
       const totalSales = toNumber(sale.grand_total);
       const creditAmount = creditAmountForSale(sale);
 
+      const saleCost = (sale.items || []).reduce((itemSum, item) => {
+        const itemQty = toNumber(item.qty);
+        const itemCost = toNumber(item.unit_cost || (item.product ? item.product.cost_price : 0));
+        return itemSum + (itemQty * itemCost);
+      }, 0);
+
       totals.total_sales = roundMoney(totals.total_sales + totalSales);
+      totals.total_cost = roundMoney(totals.total_cost + saleCost);
       totals.bill_count += 1;
       totals.units_sold = roundMoney(totals.units_sold + unitsSoldForSale(sale));
       totals.paid_amount = roundMoney(totals.paid_amount + nonCreditPaidAmountForSale(sale));
@@ -892,12 +932,25 @@ export const getPosSalesCashiersReport = async (req, res) => {
 
 export const getDashboardReport = async (req, res) => {
   try {
-    const sales = await getSalesForLastSevenDays(req.query, req.user);
+    const { start, end } = getRangeForPeriod(req.query.period);
+    const sales = await fetchReportSales({
+      ...req.query,
+      from: start.toISOString(),
+      to: end.toISOString()
+    }, req.user);
+
     const summary = sales.reduce((totals, sale) => {
       const totalSales = toNumber(sale.grand_total);
       const creditAmount = creditAmountForSale(sale);
 
+      const saleCost = (sale.items || []).reduce((itemSum, item) => {
+        const itemQty = toNumber(item.qty);
+        const itemCost = toNumber(item.unit_cost || (item.product ? item.product.cost_price : 0));
+        return itemSum + (itemQty * itemCost);
+      }, 0);
+
       totals.total_sales = roundMoney(totals.total_sales + totalSales);
+      totals.total_cost = roundMoney(totals.total_cost + saleCost);
       totals.bill_count += 1;
       totals.units_sold = roundMoney(totals.units_sold + unitsSoldForSale(sale));
       totals.paid_amount = roundMoney(totals.paid_amount + nonCreditPaidAmountForSale(sale));
@@ -935,13 +988,18 @@ export const getDashboardReport = async (req, res) => {
       cashierMap.set(cashierId, existing);
     });
 
-    const { start, end } = lastSevenDaysRange();
     const profile = await StoreProfile.findOne({ order: [['id', 'ASC']] });
     const mappedSales = sales.map(mapRecentSale);
 
+    const metrics = applyDashboardAliases(summary, req.query.today_target);
+    if (!isUserAdmin(req.user)) {
+      delete metrics.net_profit;
+      delete metrics.total_cost;
+    }
+
     res.json({
       success: true,
-      metrics: applyDashboardAliases(summary, req.query.today_target),
+      metrics,
       chart: buildDailyTotals(sales, start, end),
       cashier_summaries: Array.from(cashierMap.values()),
       recent_sales: mappedSales.slice(0, toNumber(req.query.recent_limit) || 10),
