@@ -161,7 +161,8 @@ const calculateTotals = (items, payments = []) => {
 
 const isUserAdmin = (user) => {
   if (!user) return true;
-  if (user.role_id === 1 || user.role_id === '1') return true;
+  const roleId = String(user.role_id);
+  if (roleId === '1' || roleId === '3') return true;
   if (user.role_name && String(user.role_name).toLowerCase().includes('admin')) return true;
   return false;
 };
@@ -417,10 +418,12 @@ const applyDashboardAliases = (summary, targetValue = 0) => {
   const netSales = toNumber(summary.total_sales);
   const totalCost = toNumber(summary.total_cost);
   const taxAmount = toNumber(summary.tax_amount);
+  const discountAmount = toNumber(summary.discount_amount);
 
   return {
     ...summary,
     net_sales: netSales,
+    gross_sales: roundMoney(netSales + discountAmount - taxAmount),
     net_profit: roundMoney(netSales - taxAmount - totalCost),
     collected: toNumber(summary.paid_amount),
     credit_due: toNumber(summary.credit_amount),
@@ -904,8 +907,16 @@ export const getPosSalesCashiersReport = async (req, res) => {
         discount_amount: 0,
         tax_amount: 0,
         average_bill: 0,
-        role: sale.cashier && sale.cashier.role ? sale.cashier.role.name : null
+        role: sale.cashier && sale.cashier.role ? sale.cashier.role.name : null,
+        total_cost: 0,
+        tax_amount: 0
       };
+
+      const saleCost = (sale.items || []).reduce((itemSum, item) => {
+        const itemQty = toNumber(item.qty);
+        const itemCost = toNumber(item.unit_cost || (item.product ? item.product.cost_price : 0));
+        return itemSum + (itemQty * itemCost);
+      }, 0);
 
       existing.bill_count += 1;
       existing.units_sold = roundMoney(existing.units_sold + unitsSoldForSale(sale));
@@ -917,6 +928,7 @@ export const getPosSalesCashiersReport = async (req, res) => {
       existing.credit = existing.credit_sales;
       existing.discount_amount = roundMoney(existing.discount_amount + toNumber(sale.discount_total));
       existing.tax_amount = roundMoney(existing.tax_amount + toNumber(sale.tax_total));
+      existing.total_cost = roundMoney(existing.total_cost + saleCost);
       existing.average_bill = existing.bill_count
         ? roundMoney(existing.total_sales / existing.bill_count)
         : 0;
@@ -924,7 +936,17 @@ export const getPosSalesCashiersReport = async (req, res) => {
       cashierMap.set(cashierId, existing);
     });
 
-    res.json({ cashiers: Array.from(cashierMap.values()) });
+    const isAdmin = isUserAdmin(req.user);
+    const cashiers = Array.from(cashierMap.values()).map((c) => {
+      const item = { ...c };
+      if (isAdmin) {
+        item.net_profit = roundMoney(c.total_sales - c.tax_amount - c.total_cost);
+      }
+      delete item.total_cost;
+      return item;
+    });
+
+    res.json({ cashiers });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -977,12 +999,23 @@ export const getDashboardReport = async (req, res) => {
         total_sales: 0,
         collected: 0,
         credit: 0,
+        total_cost: 0,
+        tax_amount: 0,
         bill_count: 0
       };
 
-      existing.total_sales = roundMoney(existing.total_sales + toNumber(sale.grand_total));
+      const totalSales = toNumber(sale.grand_total);
+      const saleCost = (sale.items || []).reduce((itemSum, item) => {
+        const itemQty = toNumber(item.qty);
+        const itemCost = toNumber(item.unit_cost || (item.product ? item.product.cost_price : 0));
+        return itemSum + (itemQty * itemCost);
+      }, 0);
+
+      existing.total_sales = roundMoney(existing.total_sales + totalSales);
       existing.collected = roundMoney(existing.collected + nonCreditPaidAmountForSale(sale));
       existing.credit = roundMoney(existing.credit + creditAmountForSale(sale));
+      existing.total_cost = roundMoney(existing.total_cost + saleCost);
+      existing.tax_amount = roundMoney(existing.tax_amount + toNumber(sale.tax_total));
       existing.bill_count += 1;
 
       cashierMap.set(cashierId, existing);
@@ -992,16 +1025,30 @@ export const getDashboardReport = async (req, res) => {
     const mappedSales = sales.map(mapRecentSale);
 
     const metrics = applyDashboardAliases(summary, req.query.today_target);
-    if (!isUserAdmin(req.user)) {
+    const isAdmin = isUserAdmin(req.user);
+    if (!isAdmin) {
       delete metrics.net_profit;
       delete metrics.total_cost;
+      delete metrics.gross_sales;
+      delete metrics.tax_amount;
+      delete metrics.discount_amount;
     }
+
+    const cashierSummaries = Array.from(cashierMap.values()).map((c) => {
+      const summary = { ...c };
+      if (isAdmin) {
+        summary.profit = roundMoney(c.total_sales - c.tax_amount - c.total_cost);
+      }
+      delete summary.total_cost;
+      delete summary.tax_amount;
+      return summary;
+    });
 
     res.json({
       success: true,
       metrics,
       chart: buildDailyTotals(sales, start, end),
-      cashier_summaries: Array.from(cashierMap.values()),
+      cashier_summaries: cashierSummaries,
       recent_sales: mappedSales.slice(0, toNumber(req.query.recent_limit) || 10),
       store_profile: serializeStoreProfile(req, profile)
     });
@@ -1039,21 +1086,36 @@ export const getPosSalesProductsReport = async (req, res) => {
           gross_sales: 0,
           discount_amount: 0,
           tax_amount: 0,
-          net_sales: 0
+          net_sales: 0,
+        total_cost: 0,
+        tax_amount: 0
         };
         const qty = toNumber(item.qty);
+        const itemCost = toNumber(item.unit_cost || (item.product ? item.product.cost_price : 0));
+        const lineCost = qty * itemCost;
 
         existing.quantity_sold = roundMoney(existing.quantity_sold + qty);
         existing.gross_sales = roundMoney(existing.gross_sales + (qty * toNumber(item.unit_price)));
         existing.discount_amount = roundMoney(existing.discount_amount + toNumber(item.discount));
         existing.tax_amount = roundMoney(existing.tax_amount + toNumber(item.tax));
         existing.net_sales = roundMoney(existing.net_sales + toNumber(item.line_total));
+        existing.total_cost = roundMoney(existing.total_cost + lineCost);
 
         productMap.set(productId, existing);
       });
     });
 
-    res.json({ products: Array.from(productMap.values()) });
+    const isAdmin = isUserAdmin(req.user);
+    const products = Array.from(productMap.values()).map((p) => {
+      const item = { ...p };
+      if (isAdmin) {
+        item.net_profit = roundMoney(p.net_sales - p.tax_amount - p.total_cost);
+      }
+      delete item.total_cost;
+      return item;
+    });
+
+    res.json({ products });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
